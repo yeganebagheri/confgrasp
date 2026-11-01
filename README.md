@@ -3,6 +3,9 @@
 **Calibrated accept/abstain decisions for 6-DoF grasp detection, tested on real GraspNet-1Billion scenes.**
 
 A grasp network gives every grasp a score, but the score has no meaning on its own: "0.4" does not tell a robot how often it will drop the object. ConfGrasp turns the score into a promise — *"of the grasps I accept, at most α% fail"* — and abstains on everything else. It also tests honestly whether that promise survives scenes the calibration has never seen.
+
+> 
+
 ---
 
 ## Results at a glance
