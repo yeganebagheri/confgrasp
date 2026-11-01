@@ -1,14 +1,20 @@
 # ConfGrasp — knowing when *not* to grasp
 
-**Calibrated accept/abstain decisions for 6-DoF grasp detection, tested on real GraspNet-1Billion scenes.**
+**A calibration and abstention safety layer for any grasp detector. Give it scored grasps; it returns a threshold with a statistical promise — and tells you honestly when that promise breaks on new scenes.**
 
-A grasp network gives every grasp a score, but the score has no meaning on its own: "0.4" does not tell a robot how often it will drop the object. ConfGrasp turns the score into a promise — *"of the grasps I accept, at most α% fail"* — and abstains on everything else. It also tests honestly whether that promise survives scenes the calibration has never seen.
+A grasp network gives every grasp a score, but the score has no meaning on its own: "0.4" does not tell a robot how often it will drop the object. ConfGrasp turns scores into a decision rule with a guarantee — *"of the grasps I accept, at most α% fail"* — and abstains on everything else, so uncertain picks can be routed to a person instead of attempted blindly.
 
-> 
+This is the decision every production picking system has to make. Deployed systems hand off low-confidence picks to humans, and their accuracy drops when they move to a new site before recovering with new data. ConfGrasp studies exactly that failure mode: **does a calibrated promise survive scenes the calibration has never seen?** (Spoiler: naively, no.)
+
+The layer is **detector-agnostic**: it only consumes `(grasp, score)` pairs. The current detector is GraspNet-baseline on GraspNet-1Billion scenes; it is the replaceable part. The calibration layer is the contribution.
+
+>
 
 ---
 
 ## Results at a glance
+
+Detector: pretrained GraspNet-baseline. Scenes: GraspNet-1Billion 100–104, leave-one-scene-out.
 
 | | Accepted grasps | Failure rate (held-out scenes) | Promise broken |
 |---|---|---|---|
@@ -20,9 +26,9 @@ A grasp network gives every grasp a score, but the score has no meaning on its o
 Key findings:
 
 1. **The network score is informative.** Grasps in the top score decile are ~90% correct, in the bottom decile ~47% (Fig. 1).
-2. **Naive calibration breaks on new scenes.** Calibrating on 4 scenes and testing on the 5th, the 20% promise was violated on 4 of 5 scenes (worst: 32.6% on scene 102).
+2. **Naive calibration breaks on new scenes.** Calibrating on 4 scenes and testing on the 5th, the 20% promise was violated on 4 of 5 scenes (worst: 32.6% on scene 102). This is the cross-scene shift that hits deployed systems at every new site.
 3. **Why:** the guarantee assumes independent samples, but grasps from the same camera frame are near-copies. Counting ~44 frames instead of ~4,500 grasps as evidence makes the bound honest — violations drop to 1/5 (α = 20%) and 0/5 (α = 30%) — at the price of abstaining more (Fig. 2).
-4. **What would really fix it:** more calibration *scenes*, and a stronger score (better detector or re-ranking).
+4. **A better detector doesn't make this go away** — miscalibration under scene shift is a property of the evaluation, not of one 2020 model. Testing a second, stronger detector through the same layer is the next step (see below).
 
 ![score vs correct](fig1_score_vs_correct.png)
 *Fig. 1 — % correct grasps per network-score decile (5,657 grasps, 55 frames, 5 scenes).*
@@ -35,12 +41,17 @@ Key findings:
 ## Pipeline
 
 ```
-depth image ──► point cloud ──► fixed workspace crop ──► GraspNet-baseline (pretrained)
+depth image ──► point cloud ──► fixed workspace crop ──► any grasp detector
+                                                         (here: GraspNet-baseline, pretrained)
                                                               │
-                                              grasps + network score
+                                              grasps + detector score
                                                               │
                          collision filter ──► ConfGrasp threshold ──► ACCEPT  /  ABSTAIN
+                                                                        │           │
+                                                                     attempt     hand off
 ```
+
+The dashed box is the only detector-specific part. Everything below the score consumes `(grasp, score, outcome)` triples and works unchanged with any scorer.
 
 | Step | What | File |
 |---|---|---|
@@ -55,18 +66,28 @@ Earlier steps (weeks 1–8: point clouds, camera model, grasp geometry, partial 
 
 ---
 
+## Metrics that matter in deployment
+
+Production picking systems are judged on more than accuracy. The evaluation here reports, and the real-robot stage will report:
+
+- **Success rate on attempted picks** (the promise: ≤ α% failures among accepts)
+- **Attempt rate** — how often the robot acts at all (abstaining on everything is a useless guarantee)
+- **Interventions per 100 picks** — each abstention is a human handoff; it has a cost, but a smaller one than a dropped item
+
 ## Limitations (honest list)
 
 - **Correctness is a proxy.** The 1 cm / 30° nearest-label rule is more lenient than GraspNet's official physics-based evaluation (it ignores width and depth). Numbers here are good for *comparing* methods, not for comparing with published AP.
 - **Small evaluation:** 5 scenes, 55 frames. Scene-to-scene variation dominates.
 - **"Count frames" is an approximation** (an effective-sample-size correction), not an exact proof. Frames from the same scene are still correlated.
-- **Pretrained 2020 model.** Newer detectors score much higher on GraspNet; the calibration method is independent of the detector.
+- **One detector so far.** GraspNet-baseline is a 2020 model; newer detectors score much higher. The layer is independent of the detector, but that claim is only demonstrated once a second detector runs through it.
 
 ## Next
 
-- [ ] Run ConfGrasp on a real **SO-101 arm** (in progress — servos configured, parts printing); calibrate on real pick attempts, where success is measured by the gripper (position + current).
-- [ ] Calibrate on more scenes; try a stronger detector (e.g. RNGNet / HGGD).
-- [ ] ROS 2 node (C++, ONNX Runtime) for accept/abstain at run time.
+- [ ] **Second detector** (RNGNet / HGGD) through the same layer, same 55 frames: does calibration also break on new scenes with a stronger model?
+- [ ] **Real SO-101 arm** (in progress — servos configured, parts printing): calibrate on real pick attempts, where success is measured by the gripper (position + current); show the promise breaking on new scenes and recovering after recalibration.
+- [ ] Calibrate on more scenes.
+- [ ] **ROS 2 node** (C++, ONNX Runtime) for accept/abstain at run time, publishing accepted grasps green and abstained red in RViz.
+- [ ] Stretch: failure detection for a fine-tuned vision-language-action policy.
 
 ## Run it
 
@@ -90,4 +111,4 @@ Data (not in this repo): [GraspNet-1Billion](https://graspnet.net/datasets.html)
 - Angelopoulos & Bates, *A Gentle Introduction to Conformal Prediction and Distribution-Free Uncertainty Quantification*, 2021.
 
 ---
-*Author: Yegane Bagheri — TODO: LinkedIn / email*
+*Author: Yegane Bagheri 
