@@ -1,0 +1,24 @@
+# rename this file to:  .gitignore   (with the dot, no .txt)
+
+# environments
+.venv/
+lerobot-env/
+__pycache__/
+
+# big data - never commit (GraspNet is GBs)
+graspnet/
+*.zip
+preds/
+*.tar
+
+# large intermediate files
+*.ply
+*.pt
+*.npy
+week4_results.npz
+week5_data.npz
+week6_data.npz
+
+# keep the small calibration result so others can run 13/14/15
+!week12_calib.npzdoc/
+Folder_To_Text_Converter.py
